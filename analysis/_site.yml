@@ -1,41 +1,39 @@
-name: "Mouse EHF Data"
+name: Mouse EHF Data
 output_dir: ../docs
 navbar:
-  title: "Mouse EHF Data"
+  title: Mouse EHF Data
   left:
   - text: Home
     href: index.html
   - text: About
     href: about.html
-  - text: "Analysis"
+  - text: Analysis
     menu:
-      - text: "Import"
-        href: import.html
-      - text: "Quality"
-        href: quality.html
-      - text: "Normalization"
-        href: normalization.html
-      - text: "Feature"
-        href: feature.html
-      - text: "Integration"
-        href: integration.html
-      - text: "Dimensionality"
-        href: dimension.html
-      - text: "Clustering"
-        href: clustering.html
-      - text: "Markers"
-        href: markers.html
-      - text: "Annotation"
-        href: annotation.html
-      - text: "Trajectory"
-        href: trajectory.html
-      - text: "Interactive"
-        href: interactive.html
+    - text: Import
+      href: import.html
+    - text: Quality
+      href: quality.html
+    - text: Normalization
+      href: normalization.html
+    - text: Feature
+      href: feature.html
+    - text: Integration
+      href: integration.html
+    - text: Dimensionality
+      href: dimension.html
+    - text: Clustering
+      href: clustering.html
+    - text: Markers
+      href: markers.html
+    - text: Annotation
+      href: annotation.html
+    - text: Trajectory
+      href: trajectory.html
+    - text: Interactive
+      href: interactive.html
   right:
-  - text: "License"
-    href: license.html
   - icon: fa-github
-    text: "Source code"
+    text: Source code
     href: https://github.com/jma1991/EHF
 output:
   workflowr::wflow_html:
