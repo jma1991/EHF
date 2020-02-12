@@ -32,7 +32,7 @@ pacman::p_load(scater, scran, SingleCellExperiment, uwot, Rtsne)
 Import experiment data:
 
 ```{r}
-sce <- readr::read_rds(here::here("data/markers.rds"))
+sce <- readr::read_rds(here::here("data/annotation.rds"))
 ```
 
 ## Exploration

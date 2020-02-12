@@ -28,27 +28,33 @@ knitr::opts_chunk$set(
 
 Load required analysis packages:
 
+```{r, cache = FALSE}
+pacman::p_load(batchelor, gam, here, readr, scater, scran, slingshot, RColorBrewer, pheatmap, BiocParallel)
+```
+
+## Parallelization
+
 ```{r}
-pacman::p_load(batchelor, gam, here, readr, scater, scran, slingshot, RColorBrewer, pheatmap)
+bpparam <- MulticoreParam(4)
 ```
 
 ## Atlas
 
 Load the MouseGastrulationData package:
 
-```{r}
+```{r, cache = FALSE}
 pacman::p_load(MouseGastrulationData)
 ```
 
 Modify colour palette to include unassigned and unknown cells:
 
-```{r}
+```{r, cache = FALSE}
 EmbryoCelltypeColours <- c(EmbryoCelltypeColours, unassigned = "#999999", unknown = "#999999")
 ```
 
 Select samples from embryonic stage E8.25:
 
-```{r}
+```{r, cache = FALSE}
 sel <- subset(AtlasSampleMetadata, stage %in% c("E7.0", "E7.25", "E7.5", "E7.75"))
 ```
 
@@ -60,7 +66,7 @@ ref <- EmbryoAtlasData(type = "processed", samples = sel$sample)
 
 Remove cells with no defined cell type:
 
-```{r}
+```{r, cache = FALSE}
 nan <- is.na(ref$celltype)
 ref <- ref[, !nan]
 ```
@@ -73,13 +79,13 @@ ref <- logNormCounts(ref)
 
 Change dimension names to those required by the scater package:
 
-```{r}
+```{r, cache = FALSE}
 reducedDimNames(ref) <- c("PCA", "UMAP")
 ```
 
 Plot UMAP showing all the selected cells: 
 
-```{r}
+```{r, cache = FALSE}
 plt <- plotUMAP(ref)
 
 plt$data$colour_by <- ref$celltype
@@ -99,14 +105,14 @@ ggplot(plt$data, aes(X, Y)) +
 Load the EHF dataset:
 
 ```{r}
-sce <- read_rds(here("data/annotation.Rds"))
+sce <- read_rds(here("data/01-analysis.rds"))
 ```
 
 ## Neighbors
 
 Clear spike-in information across batches:
 
-```{r}
+```{r, cache = FALSE}
 ref <- clearSpikes(ref)
 
 sce <- clearSpikes(sce)
@@ -114,7 +120,7 @@ sce <- clearSpikes(sce)
 
 Filter batches to contain same genes:
 
-```{r}
+```{r, cache = FALSE}
 rownames(ref) <- rowData(ref)$ENSEMBL
 
 rownames(sce) <- rowData(sce)$gene_id
@@ -131,14 +137,18 @@ Select genes with positive average biological components:
 ```{r}
 mod <- model.matrix(~ stage + sample, data = colData(ref))
 
-dec <- combineVar(modelGeneVar(ref, design = mod), modelGeneVar(sce, block = sce$phase))
+var.ref <- modelGeneVar(ref, design = mod, BPPARAM = bpparam)
+  
+var.sce <- modelGeneVar(sce, block = sce$phase, BPPARAM = bpparam)
+
+dec <- combineVar(var.ref, var.sce)
 
 hvg <- rownames(dec)[dec$bio > 0]
 ```
 
 Rename cells from query and reference data:
 
-```{r}
+```{r, cache = FALSE}
 colnames(sce) <- paste0("wilson-", seq_len(ncol(sce)))
 
 colnames(ref) <- paste0("marioni-", seq_len(ncol(ref)))
@@ -147,14 +157,14 @@ colnames(ref) <- paste0("marioni-", seq_len(ncol(ref)))
 Correct for batch effects using a fast version of the MNN method:
 
 ```{r}
-mnn <- fastMNN(ref, sce, pc.input = TRUE, subset.row = hvg)
+mnn <- fastMNN(ref, sce, pc.input = TRUE, subset.row = hvg, BPPARAM = bpparam)
 
 reducedDimNames(mnn) <- "MNN"
 ```
 
 Incorporate raw and log counts from original data:
 
-```{r}
+```{r, cache = FALSE}
 assay(mnn, "counts") <- cbind(assay(ref[hvg, ], "counts"), assay(sce[hvg, ], "counts"))
 
 assay(mnn, "logcounts") <- cbind(assay(ref[hvg, ], "logcounts"), assay(sce[hvg, ], "logcounts"))
@@ -162,7 +172,7 @@ assay(mnn, "logcounts") <- cbind(assay(ref[hvg, ], "logcounts"), assay(sce[hvg, 
 
 Annotate merged dataset with metadata:
 
-```{r}
+```{r, cache = FALSE}
 #Batch
 mnn$batch <- ifelse(mnn$batch == 1, "Marioni", "Wilson")
 
@@ -170,21 +180,25 @@ mnn$batch <- ifelse(mnn$batch == 1, "Marioni", "Wilson")
 mnn$celltype <- c(ref$celltype, sce$cellassign_celltype)
 
 # Pool
-mnn$stage <- NA
+mnn$stage <- "NA"
 mnn$stage[mnn$batch == "Marioni"] <- ref$stage
 
 # Sample
-mnn$sample <- NA
+mnn$sample <- "NA"
 mnn$sample[mnn$batch == "Marioni"] <- ref$sample
 
 # Phase
-mnn$phase <- NA
-mnn$phase[mnn$batch == "Wilson"] <- sce$phase
+mnn$phase <- "NA"
+mnn$phase[mnn$batch == "Wilson"] <- as.character(sce$phase)
+
+# Phase
+mnn$germ <- "NA"
+mnn$germ[mnn$batch == "Wilson"] <- as.character(sce$germ_layer)
 ```
 
 Choose optimal K from reference cells:
 
-```{r}
+```{r, eval = FALSE}
 dim <- reducedDim(mnn, "MNN")[mnn$batch == "Marioni", ]
 
 colnames(dim) <- paste0("PC", seq_len(ncol(dim)))
@@ -200,7 +214,7 @@ mod <- caret::trainControl(
   savePredictions = TRUE
 )
 
-grd <- expand.grid(k = seq(1, 100, by = 2))
+grd <- expand.grid(k = seq(1, 50, by = 2))
 
 set.seed(1701)
 
@@ -211,7 +225,11 @@ num <- fit$bestTune$k
 
 Identify kNN from reference cells:
 
-```{r}
+```{r, cache = FALSE}
+set.seed(1701)
+
+num <- 2
+
 sbj <- reducedDim(mnn, "MNN")[mnn$batch == "Marioni", ]
 
 qry <- reducedDim(mnn, "MNN")[mnn$batch == "Wilson", ]
@@ -221,7 +239,7 @@ knn <- BiocNeighbors::queryKNN(sbj, qry, k = num)
 
 Annotate cell type using kNN cells:
 
-```{r}
+```{r, cache = FALSE}
 nan <- rep(NA, ncol(sce))
 
 # Neighbor
@@ -243,7 +261,7 @@ mnn$stage[mnn$batch == "Wilson"] <- lab
 
 Filter merged dataset to k closest cells:
 
-```{r}
+```{r, cache = FALSE}
 id1 <- which(mnn$batch == "Wilson")
 
 len <- seq_len(num)
@@ -259,15 +277,15 @@ mnn <- mnn[, idx]
 
 Perform UMAP on the PCA data from the combined dataset:
 
-```{r}
+```{r, cache = FALSE}
 set.seed(1701)
 
-mnn <- runUMAP(mnn, n_neighbors = 50, dimred = "MNN")
+mnn <- runUMAP(mnn, n_neighbors = 50, dimred = "MNN", BPPARAM = bpparam)
 ```
 
 Plot UMAP showing batch annotation:
 
-```{r}
+```{r, cache = FALSE}
 plt <- plotUMAP(mnn)
 
 plt$data$colour_by <- mnn$batch
@@ -286,7 +304,7 @@ ggplot(plt$data, aes(X, Y)) +
 
 Plot UMAP showing celltype annotation:
 
-```{r}
+```{r, cache = FALSE}
 plt <- plotUMAP(mnn)
 
 plt$data$fill_by <- mnn$celltype
@@ -314,9 +332,35 @@ ggplot(plt$data, aes(X, Y)) +
   theme(aspect.ratio = 1)
 ```
 
+Plot UMAP showing germ layer annotation:
+
+```{r, cache = FALSE}
+plt <- plotUMAP(mnn)
+
+plt$data$fill_by <- mnn$germ
+
+plt$data$colour_by <- mnn$batch
+
+plt$data$facet_by <- mnn$stage
+
+col <- c(RColorBrewer::brewer.pal(3, name = "Set1"), "#d9d9d9")
+
+names(col) <- c("ectoderm", "intermediate", "mesoderm", "NA")
+
+pch <- c("Marioni" = "transparent", "Wilson" = "#000000")
+
+ggplot(plt$data, aes(X, Y)) +
+  geom_point(aes(fill = fill_by, colour = colour_by), shape = 21) + 
+  facet_wrap(~ facet_by, scales = "fixed") + 
+  scale_fill_manual(name = "Cell type", values = col) + 
+  scale_colour_manual(name = "Batch", values = pch, limits = "Wilson") + 
+  theme_void() +
+  theme(aspect.ratio = 1)
+```
+
 Plot UMAP showing neighbour and batch annotation:
 
-```{r}
+```{r, cache = FALSE}
 plt <- plotUMAP(mnn)
 
 plt$data$fill_by <- mnn$neighbor
